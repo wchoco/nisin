@@ -245,6 +245,20 @@ class Pointer(NisinType):
             raise ValueError(f"unknown bit: {bit}")
 
 
+class Padding(NisinType):
+    @staticmethod
+    def get_name() -> str:
+        return "padding"
+
+    @staticmethod
+    def get_short_name() -> str:
+        return "padding"
+
+    @staticmethod
+    def get_format(bit: int = 64) -> str:
+        return "x"
+
+
 primitive: Dict[str, Type[NisinType]] = {
     # default
     "char": Char,
@@ -282,4 +296,13 @@ primitive: Dict[str, Type[NisinType]] = {
     "__u64": U64,
     # utils
     "bool": Bool,
+    "s8": S8,
+    "s16": S16,
+    "s32": S32,
+    "s64": S64,
+    "u8": U8,
+    "u16": U16,
+    "u32": U32,
+    "u64": U64,
+    "padding": Padding,
 }

@@ -2,10 +2,12 @@ import struct
 from typing import Any, Optional, List, Dict, Type, Union, Tuple
 import re
 import yaml
-from .primitive import NisinType, Pointer, primitive
+
+from nisin.struct import StructData
+from .primitive import Char, NisinType, Padding, Pointer, primitive
 
 StructField = Dict[str, Union[str, Dict[str, Union[str, int]]]]
-Structs = Dict[str, Union[str, List[StructField]]]
+StructDefs = Dict[str, Union[str, List[StructField]]]
 
 
 class BinaryParser:
@@ -16,6 +18,8 @@ class BinaryParser:
         ptr_depth: int = 0,
         dim: List[int] = None,
         children: Optional[Dict[str, "BinaryParser"]] = None,
+        fmt: str = None,
+        labels: Dict[Union[str, int], str] = None,
     ) -> None:
         self.type_name = type_name
         self.type = type
@@ -23,8 +27,8 @@ class BinaryParser:
         self.dim = [] if dim is None else dim
         self.children = children
 
-        self._binary_data = None
-        self._data = None
+        self._fmt = fmt
+        self._labels = labels
 
     def get_format(self, bit=64) -> Tuple[str, int]:
         fmts = []
@@ -45,8 +49,7 @@ class BinaryParser:
 
     def parse(
         self, buf: bytes, bit: int = 64, endian: str = "little", offset: int = 0
-    ) -> Dict[str, Any]:
-        self.clear()
+    ) -> StructData:
         fmt, size = self.get_format(bit)
         if endian == "little":
             fmt = "<" + fmt
@@ -58,33 +61,36 @@ class BinaryParser:
         data = list(struct.unpack_from(fmt, buf, offset))[::-1]
         return self.asign_data(data)
 
-    def asign_data(self, data: List[Any], *, dim: List[int] = None) -> Any:
+    def asign_data(self, data: List[Any], *, dim: List[int] = None) -> StructData:
         if dim is None:
             dim = self.dim
 
         if len(dim) != 0:  # array
-            ds = []
+            d: Any = []
             for i in range(dim[0]):
-                ds.append(self.asign_data(data, dim=dim[1:]))
-            return ds
+                d.append(self.asign_data(data, dim=dim[1:]))
+            if self.type == Char and len(dim) == 1:
+                d = b"".join(x.value for x in d).decode()
         elif self.ptr_depth > 0:  # pointer
-            return data.pop()
+            d = data.pop()
         elif self.type is not None:  # primitive
-            return data.pop()
+            d = data.pop()
         elif self.children is not None:  # struct
             d = {}
             for field_name, c in self.children.items():
+                if c.type == Padding:
+                    continue
                 d[field_name] = c.asign_data(data)
-            return d
         else:
             raise ValueError
+        return StructData(d, self._fmt, self._labels)
 
     def show(
         self,
         *,
         use_short: bool = True,
         indent: int = 0,
-        step: int = 4,
+        step: int = 2,
         name: Optional[str] = None,
     ) -> str:
         idt = " " * indent * step
@@ -113,19 +119,11 @@ class BinaryParser:
             s += "\n".join(ss)
         return s
 
-    def clear(self) -> None:
-        self._binary_data = None
-        self._data = None
-
-        if self.children is not None:
-            for c in self.children.values():
-                c.clear()
-
 
 class StructsDefinitions:
     array_dim_pat = re.compile(r"\[([0-9]+)\]")
 
-    def __init__(self, structs: Structs) -> None:
+    def __init__(self, structs: StructDefs) -> None:
         self.structs = structs
 
     @classmethod
@@ -154,22 +152,30 @@ class StructsDefinitions:
                 )
             field_name, entry = field.popitem()
             if isinstance(entry, str):
-                dim = [int(m.group(1)) for m in re.finditer(self.array_dim_pat, entry)]
-                if len(dim) > 0:
-                    entry = entry.split("[")[0]
-
-                if "*" in entry:
-                    ptr_depth = entry.count("*")
-                    children[field_name] = BinaryParser(
-                        entry.strip("* "), ptr_depth=ptr_depth, dim=dim
-                    )
-                elif entry in primitive:
-                    children[field_name] = BinaryParser(
-                        entry, dim=dim, type=primitive[entry]
-                    )
-                else:
-                    children[field_name] = self.build_parser(entry)
+                children[field_name] = self.convert_type(entry)
             else:
-                raise NotImplementedError
+                bp = self.convert_type(entry["type"])  # type: ignore
+                bp._fmt = entry.get("format")  # type: ignore
+                bp._labels = entry.get("labels")  # type: ignore
+                children[field_name] = bp
 
         return BinaryParser(target, children=children)
+
+    def convert_type(self, ty: str) -> BinaryParser:
+        dim = [int(m.group(1)) for m in re.finditer(self.array_dim_pat, ty)]
+        # array
+        if len(dim) > 0:
+            ty = ty.split("[")[0]
+
+        # pointer
+        if "*" in ty:
+            ptr_depth = ty.count("*")
+            bp = BinaryParser(ty.strip("* "), ptr_depth=ptr_depth, dim=dim)
+        # primitive
+        elif ty in primitive:
+            bp = BinaryParser(ty, dim=dim, type=primitive[ty])
+        # struct
+        else:
+            bp = self.build_parser(ty)
+
+        return bp
