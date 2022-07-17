@@ -1,6 +1,8 @@
 import struct
 from typing import Any, Optional, List, Dict, Type, Union, Tuple
 import re
+from enum import Enum, Flag, EnumMeta
+
 import yaml
 
 from nisin.struct import StructData
@@ -19,7 +21,6 @@ class BinaryParser:
         dim: List[int] = None,
         children: Optional[Dict[str, "BinaryParser"]] = None,
         fmt: str = None,
-        labels: Dict[Union[str, int], str] = None,
     ) -> None:
         self.type_name = type_name
         self.type = type
@@ -28,7 +29,17 @@ class BinaryParser:
         self.children = children
 
         self._fmt = fmt
-        self._labels = labels
+        self._equates: Optional[EnumMeta] = None
+
+    def set_equates(
+        self, labels: Dict[Union[str, int], str] = None, is_flag=False
+    ) -> None:
+        if labels is None:
+            return
+        if is_flag:
+            self._equates = Flag("equates", {v: k for k, v in labels.items()})  # type: ignore
+        else:
+            self._equates = Enum("equates", {v: k for k, v in labels.items()})  # type: ignore
 
     def get_format(self, bit=64) -> Tuple[str, int]:
         fmts = []
@@ -83,7 +94,7 @@ class BinaryParser:
                 d[field_name] = c.asign_data(data)
         else:
             raise ValueError
-        return StructData(d, self._fmt, self._labels)
+        return StructData(d, self._fmt, self._equates)
 
     def show(
         self,
@@ -156,7 +167,12 @@ class StructsDefinitions:
             else:
                 bp = self.convert_type(entry["type"])  # type: ignore
                 bp._fmt = entry.get("format")  # type: ignore
-                bp._labels = entry.get("labels")  # type: ignore
+
+                if "labels" in entry:
+                    bp.set_equates(entry.get("labels"))  # type: ignore
+                elif "flags" in entry:
+                    bp.set_equates(entry.get("flags"), is_flag=True)  # type: ignore
+
                 children[field_name] = bp
 
         return BinaryParser(target, children=children)

@@ -1,6 +1,7 @@
 from __future__ import annotations
-from typing import Dict, Any, Union, List
+from typing import Dict, Any, Union, List, Optional
 import json
+from enum import EnumMeta
 
 RawValue = Union[str, int]
 
@@ -10,7 +11,7 @@ class StructData:
         self,
         value: Union[RawValue, List[StructData], Dict[str, StructData]],
         fmt: str = None,
-        labels: Dict[RawValue, str] = None,
+        equates: Optional[EnumMeta] = None,
     ) -> None:
         self.value = value
         if fmt is None:
@@ -20,7 +21,7 @@ class StructData:
                 self.fmt = ""
         else:
             self.fmt = fmt
-        self.labels = {} if labels is None else labels
+        self.equates = equates
 
     def to_dict(self) -> Dict[str, Any]:
         d = {}
@@ -39,6 +40,12 @@ class StructData:
             d = []
             for v in self.value:
                 d.append(v._to_dict())
+        elif self.equates is not None:
+            try:
+                label: Union[str, int] = str(self.equates(self.value)).split(".", 1)[1]
+            except ValueError:
+                label = self.value
+            d = label
         else:
             d = self.value
         return d
@@ -68,8 +75,11 @@ class StructData:
                 ss.append(v.show(indent=indent + 1, step=step))
             ss.append(idt + "]")
             return "\n".join(ss)
+        elif self.equates is not None:
+            try:
+                label: Union[str, int] = str(self.equates(self.value)).split(".", 1)[1]
+            except ValueError:
+                label = self.value
+            return f"{idt}{nm}{label},"
         else:
-            if self.value in self.labels:
-                return f"{idt}{nm}{self.labels[self.value]},"
-            else:
-                return f"{idt}{nm}{self.value:{self.fmt}},"
+            return f"{idt}{nm}{self.value:{self.fmt}},"
